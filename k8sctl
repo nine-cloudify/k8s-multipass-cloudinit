@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -eu
+
+#-------------------global setting------------------
+NODES=2
+# choose the version in https://kubernetes.io/releases/#release-history
+K8S_VER=1.26.0
+echo "[${1:-Welcome to}] k8s cluster, version: $K8S_VER"
+#---------------------------------------------------
+
+cluster_cmd(){
+    local COMMAND=$1 # start/stop/restart/delete
+    for INSTANCE in $(multipass list | grep k8s- | awk '{print $1}');do
+        multipass $COMMAND $INSTANCE &
+    done
+    wait
+}
+
+ps1() {
+    # pretty prompt with color
+	BLACK="\033[0;30m"
+	BLUE="\033[0;34m"
+	GREEN="\033[0;32m"
+	GREY="\033[0;90m"
+	CYAN="\033[0;36m"
+	RED="\033[0;31m"
+	PURPLE="\033[0;35m"
+	BROWN="\033[0;33m"
+	WHITE="\033[0;37m"
+	BOLD="\033[1m"
+	COLOR_RESET="\033[0m"
+    echo -ne "\n$GREEN ===> $COLOR_RESET"
+}
+
+echo_cmd() {
+    echo "$(ps1)$@"
+}
+
+do_cmd() {
+    echo_cmd $@
+    "$@"
+}
+
+prepare() {
+    sed 's/@K8S_VER@/'$K8S_VER'/' templates/cloud-init.yaml > cloud-init.yaml
+    NET_OPT=""
+    if [ "${USE_BRIDGE:-}" == "true" ];then
+        NET_OPT="--bridged"
+    fi
+    export NET_OPT
+}
+
+setup_control_plane() {
+    do_cmd multipass launch --name k8s-cp --cpus 4 --memory 4G --disk 64G \
+        $NET_OPT \
+        --timeout $((60*10)) \
+        --cloud-init cloud-init.yaml \
+        --mount $(pwd):/workdir
+    do_cmd multipass exec k8s-cp -- sh -c "/workdir/scripts/setup-control-plane.sh"
+}
+
+setup_node(){
+    local index=$1
+    do_cmd multipass launch --name k8s-node-$index --cpus 2 --memory 2G --disk 64G \
+        $NET_OPT \
+        --timeout $((60*10)) \
+        --cloud-init cloud-init.yaml
+
+    # token will be expired in 24 hours
+    join_cp_cmd=$(multipass exec k8s-cp -- sh -c 'echo "sudo $(kubeadm token create --print-join-command) --v=5"')
+    do_cmd multipass exec k8s-node-$index -- sh -c "$join_cp_cmd"
+}
+
+
+create_cluster(){
+    setup_control_plane
+    local index=0
+    while [ "$index" -lt "$NODES" ]
+    do
+        index=$((++index))
+        setup_node $index &
+    done
+    wait
+}
+
+check_work_nodes_ready() {
+    if multipass exec k8s-cp -- kubectl get nodes | grep "NotReady"; then
+        echo "These node(s) are not ready:"
+        multipass exec k8s-cp -- kubectl get nodes | grep "NotReady"
+    else
+        echo "All nodes are ready."
+    fi
+}
+
+check_all_pods_running() {
+    if multipass exec k8s-cp -- kubectl get pod -A | grep -v "Running" | grep -v "NAMESPACE"; then
+        echo "These pod(s) are not ready:"
+        multipass exec k8s-cp -- kubectl get pod -A | grep -v "Running"
+    else
+        echo "All pods are running."
+    fi
+}
+
+check_all_nodes_ready(){
+    CONTROL_PLANE_STATUS=$(multipass list | grep k8s-cp | awk '{print $2}')
+    if [ "$CONTROL_PLANE_STATUS" == "Running" ];then
+        check_work_nodes_ready
+        check_all_pods_running
+        exit 0
+    else
+        echo  "ERROR: k8s-cp instance is not running."
+        exit 1
+    fi
+}
+
+add_node() {
+    local index=${1:-}
+    if [ -z "$index" ];then
+        last_index=$(multipass list | grep k8s-node | sort -r | perl -ne 'print $& if $. == 1 && /(?<=-)\d+\b/')
+        index=$((++last_index))
+    fi
+    setup_node $index
+}
+
+del_node() {
+    local node=${1:-}
+    if [ -z "$node" ];then
+        echo "Select one node to delete:"
+        select select_node in $(multipass list | grep k8s-node | awk '{print $1}' | sort)
+        do
+            node="$select_node"
+            break
+        done
+    fi
+    do_cmd multipass exec k8s-cp -- sh -c "kubectl drain $node --ignore-daemonsets --delete-emptydir-data"
+    do_cmd multipass exec k8s-cp -- sh -c "kubectl delete node $node"
+    multipass delete $node
+    multipass purge
+}
+
+
+prepare
+case ${1:-help} in
+"create")
+    create_cluster
+    ;;
+"destroy")
+    cluster_cmd stop
+    cluster_cmd delete
+    multipass purge
+    ;;
+"start")
+    cluster_cmd start
+    ;;
+"stop")
+    cluster_cmd stop
+    ;;
+"restart")
+    cluster_cmd restart
+    ;;
+"del")
+    del_node "${2:-}"
+    ;;
+"add")
+    add_node "${2:-}"
+    ;;
+"check")
+    check_all_nodes_ready
+    ;;
+"status")
+    multipass list | grep k8s-
+    ;;
+"login")
+    multipass shell k8s-cp
+    ;;
+*)
+    echo "usage: ./k8sctl [create | destroy | start | stop | restart | add | del | check | status | login]"
+esac

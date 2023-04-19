@@ -1,0 +1,72 @@
+bootcmd:
+  - curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+  - echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+
+package_update: true
+package_upgrade: true
+preserve_sources_list: true
+package_reboot_if_required: false
+manage_etc_hosts: false
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - containerd
+  - curl
+  - kubeadm=@K8S_VER@-00
+  - kubelet=@K8S_VER@-00
+  - kubectl=@K8S_VER@-00
+
+write_files:
+  - path: /etc/modules-load.d/kubernetes.conf
+    # Specifying Modules to be Loaded at Boot Time
+    content: |
+      overlay
+      br_netfilter
+  - path: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.ipv4.ip_forward                  = 1
+      net.bridge.bridge-nf-call-iptables   = 1
+      net.bridge.bridge-nf-call-ip6tables  = 1
+      net.netfilter.nf_conntrack_max       = 1048576
+      vm.overcommit_memory                 = 1
+      vm.swappiness                        = 0
+      fs.file-max                          = 52706963
+      fs.nr_open                           = 52706963
+      user.max_user_namespaces             = 28633
+  - path: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///var/run/containerd/containerd.sock
+      image-endpoint: unix:///var/run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+
+runcmd:
+  # Disable swap
+  - swapoff -a
+  - sed -i '/swap/s/^/#/' /etc/fstab
+  # Load br_netfilter module to avoid sysctl: cannot stat /proc/sys/net/bridge/bridge-nf-call-*
+  - modprobe br_netfilter
+  - modprobe overlay
+  # Load all sysctl configuration without restarting
+  - sysctl --system
+  # configure containerd
+  - mkdir -p /etc/containerd 
+  - containerd config default > /etc/containerd/config.toml
+  - sed -i 's/SystemdCgroup \= false/SystemdCgroup \= true/g' /etc/containerd/config.toml
+  # CAVEAT: do restart containerd instead of systemctl daemon-reload and enable --now containerd.
+  - systemctl restart containerd
+  - systemctl enable containerd
+  # configure crictl
+  - crictl config runtime-endpoint unix:///run/containerd/containerd.sock
+  # pin kubelet kubeadm kubectl version
+  - apt-mark hold kubelet kubeadm kubectl
+  - systemctl enable kubelet
+
+# don't reboot as occasional issue when using `multipass launch --moudule`
+#power_state:
+#  mode: reboot
+#  delay: now
+
+growpart:
+  mode: auto
+  devices: [ "/" ]
