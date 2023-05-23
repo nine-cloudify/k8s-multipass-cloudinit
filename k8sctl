@@ -4,7 +4,7 @@ set -eu
 #-------------------global setting------------------
 NODES=2
 # choose the version in https://kubernetes.io/releases/#release-history
-K8S_VER=1.27.0
+K8S_VER=$(curl -s https://kubernetes.io/releases/#release-history | egrep -o "Latest Release:.*(\d+.\d+.\d+)" | sed -n '1p' | awk 'NR=1 {print}' | grep -oEi '\d+.\d+.\d+' | sed -n '1p' | awk 'NR=1 {print}')
 echo "[${1:-Welcome to}] k8s cluster, version: $K8S_VER"
 #---------------------------------------------------
 
@@ -42,9 +42,6 @@ do_cmd() {
 }
 
 prepare() {
-    if [! -n $0 ]; then
-        K8S_VER=$0
-    fi
     sed 's/@K8S_VER@/'$K8S_VER'/' templates/cloud-init.yaml > cloud-init.yaml
     NET_OPT=""
     if [ "${USE_BRIDGE:-}" == "true" ];then
