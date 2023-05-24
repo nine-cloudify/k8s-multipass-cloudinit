@@ -4,7 +4,7 @@ set -eu
 #-------------------global setting------------------
 NODES=2
 # choose the version in https://kubernetes.io/releases/#release-history
-K8S_VER=$(curl -s https://kubernetes.io/releases/#release-history | egrep -o "Latest Release:.*(\d+.\d+.\d+)" | sed -n '1p' | awk 'NR=1 {print}' | grep -oEi '\d+.\d+.\d+' | sed -n '1p' | awk 'NR=1 {print}')
+K8S_VER=$(curl -Ls https://dl.k8s.io/release/stable.txt | awk -F "v" '{print $2}')
 echo "[${1:-Welcome to}] k8s cluster, version: $K8S_VER"
 #---------------------------------------------------
 
@@ -51,7 +51,7 @@ prepare() {
 }
 
 setup_control_plane() {
-    do_cmd multipass launch --name k8s-cp --cpus 4 --memory 4G --disk 64G \
+    do_cmd multipass launch -vvvv --name k8s-cp --cpus 4 --memory 4G --disk 64G \
         $NET_OPT \
         --timeout $((60*10)) \
         --cloud-init cloud-init.yaml \

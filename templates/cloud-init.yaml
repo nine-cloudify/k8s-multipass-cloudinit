@@ -1,6 +1,6 @@
 bootcmd:
-  - curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-  - echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+  - sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://dl.k8s.io/apt/doc/apt-key.gpg
+  - echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
 package_update: true
 package_upgrade: true
@@ -50,7 +50,7 @@ runcmd:
   # Load all sysctl configuration without restarting
   - sysctl --system
   # configure containerd
-  - mkdir -p /etc/containerd 
+  - mkdir -p /etc/containerd
   - containerd config default > /etc/containerd/config.toml
   - sed -i 's/SystemdCgroup \= false/SystemdCgroup \= true/g' /etc/containerd/config.toml
   # CAVEAT: do restart containerd instead of systemctl daemon-reload and enable --now containerd.
@@ -69,4 +69,4 @@ runcmd:
 
 growpart:
   mode: auto
-  devices: [ "/" ]
+  devices: ["/"]
